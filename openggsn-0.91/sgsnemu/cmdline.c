@@ -126,6 +126,10 @@ void clear_given (struct gengetopt_args_info *args_info)
   args_info->ipup_given = 0 ;
   args_info->ipdown_given = 0 ;
   args_info->pinghost_given = 0 ;
+  args_info->udphost_given = 0;
+  args_info->udprate_given = 0 ;
+  args_info->udpsize_given = 0 ;
+  args_info->udpcount_given = 0 ;
   args_info->pingrate_given = 0 ;
   args_info->pingsize_given = 0 ;
   args_info->pingcount_given = 0 ;
@@ -182,6 +186,8 @@ void clear_args (struct gengetopt_args_info *args_info)
   args_info->ipdown_orig = NULL;
   args_info->pinghost_arg = NULL;
   args_info->pinghost_orig = NULL;
+  args_info->udphost_arg = NULL;
+  args_info->udphost_orig = NULL;
   args_info->pingrate_arg = 1;
   args_info->pingrate_orig = NULL;
   args_info->pingsize_arg = 56;
@@ -189,7 +195,14 @@ void clear_args (struct gengetopt_args_info *args_info)
   args_info->pingcount_arg = 0;
   args_info->pingcount_orig = NULL;
   args_info->pingquiet_flag = 0;
-  
+  args_info->udprate_arg = 1;
+  args_info->udprate_orig = NULL;
+  /*args_info->pingsize_arg = 56;
+  args_info->pingsize_orig = NULL;*/
+  args_info->udpcount_arg = 0;
+  args_info->udpcount_orig = NULL;
+
+
 }
 
 static
@@ -442,14 +455,24 @@ cmdline_parser_release (struct gengetopt_args_info *args_info)
       args_info->pinghost_arg = 0;
     }
   if (args_info->pinghost_orig)
-    {
-      free (args_info->pinghost_orig); /* free previous argument */
-      args_info->pinghost_orig = 0;
-    }
+  {
+	  free (args_info->pinghost_orig); /* free previous argument */
+	  args_info->pinghost_orig = 0;
+  }
+  if (args_info->udphost_arg)
+  {
+	  free (args_info->udphost_arg); /* free previous argument */
+	  args_info->udphost_arg = 0;
+  }
+  if (args_info->udphost_orig)
+  {
+	  free (args_info->udphost_orig); /* free previous argument */
+	  args_info->udphost_orig = 0;
+  }
   if (args_info->pingrate_orig)
-    {
-      free (args_info->pingrate_orig); /* free previous argument */
-      args_info->pingrate_orig = 0;
+  {
+	  free (args_info->pingrate_orig); /* free previous argument */
+	  args_info->pingrate_orig = 0;
     }
   if (args_info->pingsize_orig)
     {
@@ -459,9 +482,21 @@ cmdline_parser_release (struct gengetopt_args_info *args_info)
   if (args_info->pingcount_orig)
     {
       free (args_info->pingcount_orig); /* free previous argument */
-      args_info->pingcount_orig = 0;
-    }
-  
+	  args_info->pingcount_orig = 0;
+	}
+
+  if (args_info->udprate_orig)
+  {
+	  free (args_info->udprate_orig); /* free previous argument */
+	  args_info->udprate_orig = 0;
+  }
+  if (args_info->udpcount_orig)
+  {
+	  free (args_info->udpcount_orig); /* free previous argument */
+	  args_info->udpcount_orig = 0;
+  }
+
+
   clear_given (args_info);
 }
 
@@ -646,13 +681,43 @@ cmdline_parser_file_save(const char *filename, struct gengetopt_args_info *args_
       fprintf(outfile, "%s=\"%s\"\n", "pinghost", args_info->pinghost_orig);
     } else {
       fprintf(outfile, "%s\n", "pinghost");
-    }
+	}
   }
+  if (args_info->udphost_given) {
+	  if (args_info->udphost_orig) {
+		  fprintf(outfile, "%s=\"%s\"\n", "udphost", args_info->udphost_orig);
+	  } else {
+		  fprintf(outfile, "%s\n", "udphost");
+	  }
+  }
+  if (args_info->udprate_given) {
+	  if (args_info->udprate_orig) {
+		  fprintf(outfile, "%s=\"%s\"\n", "udprate", args_info->udprate_orig);
+	  } else {
+		  fprintf(outfile, "%s\n", "udprate");
+	  }
+  }
+  /*if (args_info->pingsize_given) {
+	  if (args_info->pingsize_orig) {
+		  fprintf(outfile, "%s=\"%s\"\n", "pingsize", args_info->pingsize_orig);
+	  } else {
+		  fprintf(outfile, "%s\n", "pingsize");
+	  }
+  }*/
+  if (args_info->udpcount_given) {
+	  if (args_info->udpcount_orig) {
+		  fprintf(outfile, "%s=\"%s\"\n", "udpcount", args_info->udpcount_orig);
+	  } else {
+		  fprintf(outfile, "%s\n", "udpcount");
+	  }
+  }
+
+
   if (args_info->pingrate_given) {
-    if (args_info->pingrate_orig) {
-      fprintf(outfile, "%s=\"%s\"\n", "pingrate", args_info->pingrate_orig);
-    } else {
-      fprintf(outfile, "%s\n", "pingrate");
+	  if (args_info->pingrate_orig) {
+		  fprintf(outfile, "%s=\"%s\"\n", "pingrate", args_info->pingrate_orig);
+	  } else {
+		  fprintf(outfile, "%s\n", "pingrate");
     }
   }
   if (args_info->pingsize_given) {
@@ -780,10 +845,13 @@ cmdline_parser_internal (int argc, char * const *argv, struct gengetopt_args_inf
         { "defaultroute",	0, NULL, 0 },
         { "ipup",	1, NULL, 0 },
         { "ipdown",	1, NULL, 0 },
-        { "pinghost",	1, NULL, 0 },
-        { "pingrate",	1, NULL, 0 },
-        { "pingsize",	1, NULL, 0 },
-        { "pingcount",	1, NULL, 0 },
+		{ "pinghost",	1, NULL, 0 },
+		{"udprate", 1, NULL, 0},
+		{"udpcount", 1, NULL, 0},
+		{"udphost", 1, NULL, 0},
+		{ "pingrate",	1, NULL, 0 },
+		{ "pingsize",	1, NULL, 0 },
+		{ "pingcount",	1, NULL, 0 },
         { "pingquiet",	0, NULL, 0 },
         { NULL,	0, NULL, 0 }
       };
@@ -1268,15 +1336,57 @@ cmdline_parser_internal (int argc, char * const *argv, struct gengetopt_args_inf
             args_info->pinghost_arg = gengetopt_strdup (optarg);
             if (args_info->pinghost_orig)
               free (args_info->pinghost_orig); /* free previous string */
-            args_info->pinghost_orig = gengetopt_strdup (optarg);
-          }
-          /* Number of ping req per second.  */
-          else if (strcmp (long_options[option_index].name, "pingrate") == 0)
-          {
-            if (local_args_info.pingrate_given)
-              {
-                fprintf (stderr, "%s: `--pingrate' option given more than once%s\n", argv[0], (additional_error ? additional_error : ""));
-                goto failure;
+			args_info->pinghost_orig = gengetopt_strdup (optarg);
+		  }
+		  /* udp remote host.  */
+		  else if (strcmp (long_options[option_index].name, "udphost") == 0)
+		  {
+			  if (local_args_info.udphost_given)
+			  {
+				  fprintf (stderr, "%s: `--udphost' option given more than once%s\n", argv[0], (additional_error ? additional_error : ""));
+				  goto failure;
+			  }
+			  if (args_info->udphost_given && ! override)
+				  continue;
+			  local_args_info.udphost_given = 1;
+			  args_info->udphost_given = 1;
+			  if (args_info->udphost_arg)
+				  free (args_info->udphost_arg); /* free previous string */
+			  args_info->udphost_arg = gengetopt_strdup (optarg);
+			  if (args_info->udphost_orig)
+				  free (args_info->udphost_orig); /* free previous string */
+			  args_info->udphost_orig = gengetopt_strdup (optarg);
+		  }
+		  /* Number of udp req per second.  */
+		  else if (strcmp (long_options[option_index].name, "udprate") == 0)
+		  {
+			  if (local_args_info.udprate_given)
+			  {
+				  fprintf (stderr, "%s: `--udprate' option given more than once%s\n", argv[0], (additional_error ? additional_error : ""));
+				  goto failure;
+			  }
+			  if (args_info->udprate_given && ! override)
+				  continue;
+			  local_args_info.udprate_given = 1;
+			  args_info->udprate_given = 1;
+			  args_info->udprate_arg = strtol (optarg, &stop_char, 0);
+			  if (!(stop_char && *stop_char == '\0')) {
+				  fprintf(stderr, "%s: invalid numeric value: %s\n", argv[0], optarg);
+				  goto failure;
+			  }
+			  if (args_info->udprate_orig)
+				  free (args_info->udprate_orig); /* free previous string */
+			  args_info->udprate_orig = gengetopt_strdup (optarg);
+		  }
+
+
+		  /* Number of ping req per second.  */
+		  else if (strcmp (long_options[option_index].name, "pingrate") == 0)
+		  {
+			  if (local_args_info.pingrate_given)
+			  {
+				  fprintf (stderr, "%s: `--pingrate' option given more than once%s\n", argv[0], (additional_error ? additional_error : ""));
+				  goto failure;
               }
             if (args_info->pingrate_given && ! override)
               continue;
@@ -1311,7 +1421,31 @@ cmdline_parser_internal (int argc, char * const *argv, struct gengetopt_args_inf
             if (args_info->pingsize_orig)
               free (args_info->pingsize_orig); /* free previous string */
             args_info->pingsize_orig = gengetopt_strdup (optarg);
+		  }
+		  /* Number of udp req to send.  */
+		  else if (strcmp (long_options[option_index].name, "udpcount") == 0)
+		  {
+			  if (local_args_info.udpcount_given)
+			  {
+				  fprintf (stderr, "%s: `--udpcount' option given more than once%s\n", argv[0], (additional_error ? additional_error : ""));
+				  goto failure;
+			  }
+
+			  if (args_info->udpcount_given && ! override)
+				  continue;
+			  local_args_info.udpcount_given = 1;
+			  args_info->udpcount_given = 1;
+			  args_info->udpcount_arg = strtol (optarg, &stop_char, 0);
+			  if (!(stop_char && *stop_char == '\0')) {
+				  fprintf(stderr, "%s: invalid numeric value: %s\n", argv[0], optarg);
+				  goto failure;
+			  }
+
+			  if (args_info->udpcount_orig)
+				  free (args_info->udpcount_orig); /* free previous string */
+			  args_info->udpcount_orig = gengetopt_strdup (optarg);
           }
+
           /* Number of ping req to send.  */
           else if (strcmp (long_options[option_index].name, "pingcount") == 0)
           {

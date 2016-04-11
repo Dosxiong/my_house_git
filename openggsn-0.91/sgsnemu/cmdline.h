@@ -97,13 +97,19 @@ struct gengetopt_args_info
   const char *ipdown_help; /* Script to run after link-down help description.  */
   char * pinghost_arg;	/* Ping remote host.  */
   char * pinghost_orig;	/* Ping remote host original value given at command line.  */
+  char * udphost_arg; /*udp remote host*/
+  char * udphost_orig;
   const char *pinghost_help; /* Ping remote host help description.  */
+  int udprate_arg;	/* Number of pdp req per second (default='1').  */
+  char * udprate_orig;	/* Number of udp req per second original value given at command line.  */
   int pingrate_arg;	/* Number of ping req per second (default='1').  */
   char * pingrate_orig;	/* Number of ping req per second original value given at command line.  */
   const char *pingrate_help; /* Number of ping req per second help description.  */
   int pingsize_arg;	/* Number of ping data bytes (default='56').  */
   char * pingsize_orig;	/* Number of ping data bytes original value given at command line.  */
   const char *pingsize_help; /* Number of ping data bytes help description.  */
+  int udpcount_arg;	/* Number of udp req to send (default='0').  */
+  char * udpcount_orig;	/* Number of udp req to send original value given at command line.  */
   int pingcount_arg;	/* Number of ping req to send (default='0').  */
   char * pingcount_orig;	/* Number of ping req to send original value given at command line.  */
   const char *pingcount_help; /* Number of ping req to send help description.  */
@@ -137,9 +143,13 @@ struct gengetopt_args_info
   int ipup_given ;	/* Whether ipup was given.  */
   int ipdown_given ;	/* Whether ipdown was given.  */
   int pinghost_given ;	/* Whether pinghost was given.  */
+  int udphost_given;   /* Whether udphost was given.  */
   int pingrate_given ;	/* Whether pingrate was given.  */
   int pingsize_given ;	/* Whether pingsize was given.  */
   int pingcount_given ;	/* Whether pingcount was given.  */
+  int udprate_given ;	/* Whether pingrate was given.  */
+  int udpsize_given ;	/* Whether pingsize was given.  */
+  int udpcount_given ;	/* Whether pingcount was given.  */
   int pingquiet_given ;	/* Whether pingquiet was given.  */
 
 } ;

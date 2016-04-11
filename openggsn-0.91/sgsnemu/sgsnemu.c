@@ -52,7 +52,9 @@
 #include "cmdline.h"
 
 #define IPADDRLEN 256      /* Character length of addresses */ 
-#define MAXCONTEXTS 1024  /* Max number of allowed contexts */ 
+#define MAXCONTEXTS 10240  /* Max number of allowed contexts */ 
+#define PORT 7070
+#define MAXMSGSIZE 1024
 
 /* HASH tables for IP address allocation */
 struct iphash_t {
@@ -78,6 +80,11 @@ struct tun_t *tun = NULL;       /* TUN instance */
 int maxfd = 0;	                /* For select() */
 int echoversion = 1;            /* First try this version */
 
+/* receive server info */
+  int socket_descriptor = 0;
+  struct sockaddr_in sin;
+  int sin_len = 0;
+
 /* Struct with local versions of gengetopt options */
 struct {
   int debug;                      /* Print debug messages */
@@ -86,9 +93,13 @@ struct {
   char *ipup, *ipdown;            /* Filename of scripts */
   int defaultroute;               /* Set up default route */
   struct in_addr pinghost;        /* Remote ping host    */
+  struct in_addr udphost;
   int pingrate;
   int pingsize;
   int pingcount;
+  int udprate;
+  int udpsize;
+  int udpcount;
   int pingquiet;
   struct in_addr listen;
   struct in_addr remote;
@@ -115,6 +126,7 @@ struct {
 #define CREATEPING_MAX  2048
 #define CREATEPING_IP     20
 #define CREATEPING_ICMP    8
+#define CREATEUDP          8
 
 struct ip_ping {
   uint8_t ipver;               /* Type and header length*/
@@ -135,6 +147,25 @@ struct ip_ping {
   uint8_t data[CREATEPING_MAX]; /* Data */
 } __attribute__((packed));
 
+struct udp_packet {
+  uint8_t ipver;               /* Type and header length*/
+  uint8_t tos;                 /* Type of Service */
+  uint16_t length;             /* Total length */
+  uint16_t fragid;             /* Identifier */
+  uint16_t offset;             /* Flags and fragment offset */
+  uint8_t ttl;                 /* Time to live */
+  uint8_t protocol;            /* Protocol */
+  uint16_t ipcheck;            /* Header checksum */
+  uint32_t src;                /* Source address */
+  uint32_t dst;                /* Destination */
+  uint16_t srcport;            /*src port*/
+  uint16_t dstport;            /*dst port*/
+  uint16_t udplength;          /*udp length*/
+  uint16_t udpchecksum;        /*udp checksum*/
+  uint8_t data[CREATEPING_MAX]; /* Data */
+} __attribute__((packed));
+
+
 /* Statistical values for ping */
 int nreceived = 0;
 int ntreceived = 0;
@@ -143,7 +174,12 @@ int tmin = 999999999;
 int tmax = 0;
 int tsum = 0;
 int pingseq = 0;              /* Ping sequence counter */
+int udpseq = 0;              /* udp sequence counter */
 struct timeval firstping;
+struct timeval firstudp;
+
+/* dosxiong add some temp variable */
+struct in_addr temp_addr;
 
 int ipset(struct iphash_t *ipaddr, struct in_addr *addr) {
   int hash = ippool_hash4(addr) % MAXCONTEXTS;
@@ -178,11 +214,13 @@ int ipdel(struct iphash_t *ipaddr) {
 }
 
 int ipget(struct iphash_t **ipaddr, struct in_addr *addr) {
-  int hash = ippool_hash4(addr) % MAXCONTEXTS;
-  struct iphash_t *h;
-  for (h = iphash[hash]; h; h = h->ipnext) {
-    if ((h->addr.s_addr == addr->s_addr)) {
-      *ipaddr = h;
+	int hash = ippool_hash4(addr) % MAXCONTEXTS;
+	struct iphash_t *h;
+	printf("receive:%s\n",inet_ntoa(*addr));
+	for (h = iphash[hash]; h; h = h->ipnext) {
+		printf("pool:%s\n",inet_ntoa(h->addr));
+		if ((h->addr.s_addr == addr->s_addr)) {
+			*ipaddr = h;
       return 0;
     }
   }
@@ -544,15 +582,36 @@ int process_options(int argc, char **argv) {
     else {
       memcpy(&options.pinghost.s_addr, host->h_addr, host->h_length);
       printf("Using ping host:       %s (%s)\n", 
-	     args_info.pinghost_arg, inet_ntoa(options.pinghost));
-    }
+			  args_info.pinghost_arg, inet_ntoa(options.pinghost));
+	}
   }
+
+  /* udphost                                                     */
+  /* Store udp host as in_addr                                   */
+  if (args_info.udphost_arg) {
+	  if (!(host = gethostbyname(args_info.udphost_arg))) {
+		  sys_err(LOG_ERR, __FILE__, __LINE__, 0,
+				  "Invalid udp host: %s!", args_info.udphost_arg);
+		  return -1;
+	  }
+	  else {
+		  memcpy(&options.udphost.s_addr, host->h_addr, host->h_length);
+		  printf("Using udp host:       %s (%s)\n", 
+				  args_info.udphost_arg, inet_ntoa(options.udphost));
+	  }
+ 
+  }
+
 
   /* Other ping parameters                                        */
   options.pingrate = args_info.pingrate_arg;
   options.pingsize = args_info.pingsize_arg;
   options.pingcount = args_info.pingcount_arg;
   options.pingquiet = args_info.pingquiet_flag;
+
+  options.udprate = args_info.udprate_arg;
+  //options.pingsize = args_info.pingsize_arg;
+  options.udpcount = args_info.udpcount_arg;
 
   return 0;
 
@@ -682,6 +741,7 @@ int imsi_add(uint64_t src, uint64_t *dst, int add) {
 
 }
 
+
 /* Calculate time left until we have to send off next ping packet */
 int ping_timeout(struct timeval *tp) {
   struct timezone tz;
@@ -803,6 +863,84 @@ int encaps_ping(struct pdp_t *pdp, void *pack, unsigned len) {
   return 0;
 }
 
+/* Create a new udp packet and send it off to peer. */
+int create_udp(void *gsn, struct pdp_t *pdp,
+		struct in_addr *dst, int seq, unsigned int datasize) {
+
+  struct udp_packet pack;
+  uint16_t *p = (uint16_t *) &pack;
+  uint8_t  *p8 = (uint8_t *) &pack;
+  struct in_addr src;
+  unsigned int n;
+  long int sum = 0;
+  int count = 0;
+
+  struct timezone tz;
+  struct timeval *tp = (struct timeval *) &p8[CREATEPING_IP + CREATEPING_ICMP];
+
+  if (datasize > CREATEPING_MAX) {
+    sys_err(LOG_ERR, __FILE__, __LINE__, 0,
+	    "Ping size to large: %d!", datasize);
+    return -1;
+  }
+
+  memcpy(&src, &(pdp->eua.v[2]), 4); /* Copy a 4 byte address */
+
+  pack.ipver  = 0x45;
+  pack.tos    = 0x00;
+  pack.length = htons(CREATEPING_IP + CREATEUDP + datasize);
+  pack.fragid = (0xffff & (temp_addr.s_addr >> 16));
+  pack.offset = 0x0040;
+  pack.ttl    = 0x40;
+  pack.protocol = 0x11;
+  pack.ipcheck = 0x0000;
+  pack.src = src.s_addr;
+  pack.dst = dst->s_addr;
+  pack.srcport = htons(7070);
+  pack.dstport = htons(7070);
+  pack.udplength = htons(CREATEUDP + datasize);
+  pack.udpchecksum = 0x0000;
+
+  /* Generate ICMP payload */
+  p8 = (uint8_t *) &pack + CREATEPING_IP + CREATEUDP;
+  for (n=0; n<(datasize); n++) p8[n] = n;
+
+  if (datasize >= sizeof(struct timeval)) 
+    gettimeofday(tp, &tz);
+
+  /* Calculate IP header checksum */
+  p = (uint16_t *) &pack;
+  count = CREATEPING_IP;
+  sum = 0;
+  while (count>1) {
+    sum += *p++;
+    count -= 2;
+  }
+  while (sum>>16) 
+    sum = (sum & 0xffff) + (sum >> 16);
+  pack.ipcheck = ~sum;
+
+
+  /* Calculate ICMP checksum */
+  //count = CREATEPING_ICMP + datasize; /* Length of ICMP message */
+  /*sum = 0;
+  p = (uint16_t *) &pack;
+  p += CREATEPING_IP / 2;
+  while (count>1) {
+    sum += *p++;
+    count -= 2;
+  }
+  if (count>0)
+    sum += * (unsigned char *) p;
+  while (sum>>16) 
+    sum = (sum & 0xffff) + (sum >> 16);
+  pack.checksum = ~sum;*/
+
+  ntransmitted++;
+  return gtp_data_req(gsn, pdp, &pack, 28 + datasize);
+}
+
+
 /* Create a new ping packet and send it off to peer. */
 int create_ping(void *gsn, struct pdp_t *pdp,
 		struct in_addr *dst, int seq, unsigned int datasize) {
@@ -829,7 +967,7 @@ int create_ping(void *gsn, struct pdp_t *pdp,
   pack.ipver  = 0x45;
   pack.tos    = 0x00;
   pack.length = htons(CREATEPING_IP + CREATEPING_ICMP + datasize);
-  pack.fragid = 0x0000;
+  pack.fragid = (0xffff & (temp_addr.s_addr >> 16));
   pack.offset = 0x0040;
   pack.ttl    = 0x40;
   pack.protocol = 0x01;
@@ -839,7 +977,7 @@ int create_ping(void *gsn, struct pdp_t *pdp,
   pack.type = 0x08;
   pack.code = 0x00;
   pack.checksum = 0x0000;
-  pack.ident = 0x0000;
+  pack.ident = (0xffff & (temp_addr.s_addr >> 16));
   pack.seq = htons(seq);
 
   /* Generate ICMP payload */
@@ -904,6 +1042,7 @@ int cb_tun_ind(struct tun_t *tun, void *pack, unsigned len) {
 
   src.s_addr = iph->src;
 
+  printf("111\n");
   if (ipget(&ipm, &src)) {
     printf("Received packet without a valid source address!!!\n");
     return 0;
@@ -951,13 +1090,24 @@ int create_pdp_conf(struct pdp_t *pdp, void *cbp, int cause) {
     return EOF; /* Not a valid IP address */
   }
 
+  temp_addr.s_addr = addr.s_addr;
   printf("Received create PDP context response. IP address: %s\n", 
-	 inet_ntoa(addr));
+		  inet_ntoa(addr));
+  /*socket init*/
+  bzero(&sin,sizeof(sin));
+  sin.sin_family = AF_INET;
+  sin.sin_port = htons(PORT);
+  printf("udphost:%s\n", inet_ntoa(addr));
+  sin.sin_addr.s_addr = inet_addr(inet_ntoa(addr));
+  sin_len = sizeof(sin);
+  socket_descriptor = socket(AF_INET, SOCK_DGRAM, 0);
+  bind(socket_descriptor, (struct sockaddr *)(&sin), sizeof(sin));
+
 
   if ((options.createif) && (!options.net.s_addr)) {
-    struct in_addr m;
+	  struct in_addr m;
 #ifdef HAVE_INET_ATON
-    inet_aton("255.255.255.255", &m);
+	  inet_aton("255.255.255.255", &m);
 #else
     m.s_addr = -1;
 #endif
@@ -1039,6 +1189,9 @@ int main(int argc, char **argv)
   struct timezone tz;           /* Used for calculating ping times */
   struct timeval tv;
   int diff;
+
+  /* receive server info */
+  char message[MAXMSGSIZE];
 
   /* open a connection to the syslog daemon */
   /*openlog(PACKAGE, LOG_PID, LOG_DAEMON);*/
@@ -1184,6 +1337,7 @@ int main(int argc, char **argv)
     gtp_create_context_req(gsn, pdp, &iparr[n]);
   }    
 
+  
   state = 1;  /* Enter wait_connection state */
 
   printf("Waiting for response from ggsn........\n\n");
@@ -1194,7 +1348,7 @@ int main(int argc, char **argv)
   /******************************************************************/
 
   while ((0 != state) && (5 != state)) {
-
+	  
     /* Take down client after timeout after disconnect */
     if ((4 == state) && ((stoptime) <= time(NULL))) {
       state = 5;
@@ -1207,7 +1361,7 @@ int main(int argc, char **argv)
     }
 
     /* Take down client after ping timeout */
-    if ((2 == state) &&  (pingtimeout) && (pingtimeout <= time(NULL))) {
+    if ( (2 == state) &&  (pingtimeout) && (pingtimeout <= time(NULL))) {
       state = 3;
     }
 
@@ -1236,6 +1390,7 @@ int main(int argc, char **argv)
     }
 
     /* Send of ping packets */
+	//printf("ping_count %d,pingseq:%d,state :%d,diff:%d\n", options.pingcount, pingseq, state, diff);
     diff = 0;
     while (( diff<=0 ) && 
 	   /* Send off an ICMP ping packet */
@@ -1248,21 +1403,50 @@ int main(int argc, char **argv)
 	(tv.tv_usec - firstping.tv_usec); /* Microseconds safe up to 500 sec */
       if (diff <=0) {
 	if (options.debug) printf("Create_ping %d\n", diff);
+	/*create_udp(gsn, iparr[pingseq % options.contexts].pdp,
+		    &options.pinghost, pingseq, options.pingsize);*/
 	create_ping(gsn, iparr[pingseq % options.contexts].pdp,
 		    &options.pinghost, pingseq, options.pingsize);
 	pingseq++;
       }
-    }
+	  }
+
+	  /* Send of udp packets */
+	diff = 0;
+	while (( diff<=0 ) && 
+			(options.udphost.s_addr) && (2 == state) && 
+			((udpseq < options.udpcount) )) {
+		if (!udpseq) gettimeofday(&firstudp, &tz); /* Set time of first ping */
+		gettimeofday(&tv, &tz);
+		diff = 1000000 / options.udprate * udpseq -
+			1000000 * (tv.tv_sec - firstudp.tv_sec) -
+			(tv.tv_usec - firstudp.tv_usec); /* Microseconds safe up to 500 sec */
+		if (diff <=0) {
+			if (options.debug) printf("Create_udp %d\n", diff);
+			create_udp(gsn, iparr[udpseq% options.contexts].pdp,
+					&options.udphost, udpseq, 56);
+			udpseq++;
+			//diff = 2;
+		}
+	}
+
+
 
     FD_ZERO(&fds);
     if (tun) FD_SET(tun->fd, &fds);
     FD_SET(gsn->fd0, &fds);
     FD_SET(gsn->fd1c, &fds);
     FD_SET(gsn->fd1u, &fds);
-    
-    gtp_retranstimeout(gsn, &idleTime);
-    ping_timeout(&idleTime);
-    
+    FD_SET(socket_descriptor, &fds);
+
+	gtp_retranstimeout(gsn, &idleTime);
+		ping_timeout(&idleTime);
+	if(options.udphost.s_addr)
+	{
+		idleTime.tv_sec = 1/options.udprate;
+		idleTime.tv_usec = 500000;
+	}
+
     if (options.debug) printf("idletime.tv_sec %d, idleTime.tv_usec %d\n",
 			      (int) idleTime.tv_sec, (int) idleTime.tv_usec);
     
@@ -1277,22 +1461,29 @@ int main(int argc, char **argv)
     default:
       break;
     }
+
     
     if ((tun) && FD_ISSET(tun->fd, &fds) && tun_decaps(tun) < 0) {
       sys_err(LOG_ERR, __FILE__, __LINE__, 0,
 	      "TUN decaps failed");
-    }
-    
-    if (FD_ISSET(gsn->fd0, &fds))
-      gtp_decaps0(gsn);
+	}
 
-    if (FD_ISSET(gsn->fd1c, &fds))
-      gtp_decaps1c(gsn);
+	if (FD_ISSET(socket_descriptor, &fds))
+	{
+		recvfrom(socket_descriptor, message, sizeof(message), 0, (struct sockaddr *)(&sin), &sin_len);
+		//printf("%s\n", message);
+	}
 
-    if (FD_ISSET(gsn->fd1u, &fds))
-      gtp_decaps1u(gsn);
+	if (FD_ISSET(gsn->fd0, &fds))
+		gtp_decaps0(gsn);
+
+	if (FD_ISSET(gsn->fd1c, &fds))
+		gtp_decaps1c(gsn);
+
+	if (FD_ISSET(gsn->fd1u, &fds))
+		gtp_decaps1u(gsn);
   }
-  
+
   gtp_free(gsn); /* Clean up the gsn instance */
   
   if (options.createif)

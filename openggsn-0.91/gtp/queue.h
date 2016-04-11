@@ -19,7 +19,7 @@
 
 #define QUEUE_DEBUG 0     /* Print debug information */
 
-#define QUEUE_SIZE 1024   /* Size of retransmission queue */
+#define QUEUE_SIZE 10240   /* Size of retransmission queue */
 #define QUEUE_HASH_SIZE 65536 /* Size of hash table (2^16) */
 
 struct qmsg_t {           /* Holder for queued packets */
